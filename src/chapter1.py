@@ -558,7 +558,7 @@ def wflowacc(X: np.ndarray, Y: np.ndarray, dem: np.ndarray,
 
 def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndarray, elev_in: np.ndarray, 
                                          outlet_coordinate: np.ndarray, percent_basin_area: float = 0.01,
-                                         develop_plots: bool = False, display_plots: bool = False, plots_path: Optional[str | Path] = None,
+                                         save_plots: bool = False, display_plots: bool = False, plots_path: Optional[str | Path] = None,
                                          ) -> tuple[np.ndarray, np.ndarray, sparse.csr_matrix, np.ndarray, np.ndarray, np.ndarray]:
     """
     Description:
@@ -573,8 +573,8 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
     elev: elevation matrix (at each x,y point, i.e. the DEM)
     outlet_coordinate: 1x2 matrix with the x and y coordinate of the basin
       outlet;
-    develop_plots: boolean, if True, saves plots to plots_path
-    display_plots: boolean, if True, displays plots to screen (develop_plots must be set to True)
+    save_plots: boolean, if True, saves plots to plots_path
+    display_plots: boolean, if True, displays plots to screen (save_plots must be set to True)
     plots_path: folder location of where to save plots
     percent_basin_area: The percent of basin area that must contribute to
     flow accumulation for a pixel to be deemed a "stream" pixel; expressed as 
@@ -616,9 +616,9 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
     slope[slope == 0] = np.mean(slope)
 
     # Visual confirmations bypassed automatically for batch execution runs, plots are saved
-    if develop_plots:
+    if save_plots:
         # Figure 1
-        fig1, ax = plt.subplots(num=1, figsize=(7, 7))
+        fig1, ax = plt.subplots(num=1)
         im = ax.imshow(
             elev,
             extent=[easting[0], easting[-1], northing[-1], northing[0]],
@@ -640,7 +640,7 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
             plt.close(fig1)
 
         # Figure 2
-        fig2, ax = plt.subplots(num=2, figsize=(7, 7))
+        fig2, ax = plt.subplots(num=2)
         im = ax.imshow(
             np.log(flowacc), 
             extent=[easting[0], easting[-1], northing[-1], northing[0]], 
@@ -756,9 +756,9 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
     x_stream = X.ravel(order='F')[I_stream]
     y_stream = Y.ravel(order='F')[I_stream]
 
-    if develop_plots:
+    if save_plots:
         # Figure 3
-        fig3, ax = plt.subplots(num=3, figsize=(7, 7))
+        fig3, ax = plt.subplots(num=3)
         plt.clf()
         ax = plt.gca()
 
@@ -780,8 +780,8 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
 
         # Plot watershed outline and outlet
         ax.plot(watershed_outline_x, watershed_outline_y, 'w.', markersize=2, zorder=5)
-        ax.plot(X[row_coord, col_coord], Y[row_coord, col_coord], 'ro', markersize=6)
-        ax.scatter(X[row_coord, col_coord], Y[row_coord, col_coord], s=300, c="None", marker="o", edgecolors="red", linewidths=3, zorder=6)
+        # ax.plot(X[row_coord, col_coord], Y[row_coord, col_coord], 'ro', markersize=6)
+        # ax.scatter(X[row_coord, col_coord], Y[row_coord, col_coord], s=300, c="None", marker="o", edgecolors="red", linewidths=3, zorder=6)
 
         # add color bar
         cbar = fig3.colorbar(im, ax=ax)
@@ -819,7 +819,7 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
         # Ensure interactive mode is disabled if running in a GUI backend
         plt.ioff()
 
-        fig4, ax = plt.subplots(num=4, figsize=(7, 7), subplot_kw={'projection': '3d'})
+        fig4, ax = plt.subplots(num=4, subplot_kw={'projection': '3d'})
 
         # Relative elevation and surface plot
         elev_relative = (elev - elev[row_coord, col_coord]) * mask
@@ -940,16 +940,34 @@ def process_met_file(df: pd.DataFrame, gage_elev: float, dt: float = 0.25, file_
     else:
         water_year = int(first_year)
 
-    # determine number of days based on if water year is leap year
-    if (water_year % 4 == 0) and (water_year % 100 != 0 or water_year % 400 == 0):
-        num_days = 366
-    else:
-        num_days = 365
+    # # determine number of days based on if water year is leap year
+    # if (water_year % 4 == 0) and (water_year % 100 != 0 or water_year % 400 == 0):
+    #     num_days = 366
+    # else:
+    #     num_days = 365
     # Update: Remove requirement that forcing data should be exactly 1 year
     #         model number of time steps will be based on length of preprocessed meteorological data record
     # required_length = int((num_days * 24) // dt_orig)
     # if len(df) != required_length:
     #     sys.exit(f"Meteorological data must span exactly one year. Given data {dt_orig} hours apart, in water year {water_year}, there should be {required_length} data points.")
+
+    # Update: extract number of days on record and process data accordingly
+    # Requiment: met data should include FULL days, not partial days (i.e., if data is sub-daily, each day's record should be complete)
+    record_len = len(df)
+    extra_records = int(((record_len * dt_orig) % 24) // dt_orig)
+    if extra_records != 0:
+        one_day_record = int(24 / dt_orig)
+        missing_records = one_day_record - extra_records
+        full_record_low = record_len - extra_records
+        full_record_low_days = (full_record_low * dt_orig) // (24)
+        full_record_high = record_len + missing_records
+        full_record_high_days = (full_record_high * dt_orig) // (24)
+        given_record = (record_len * dt_orig) / (24)
+        sys.exit(f"""Meteorological data record contains {record_len} records with time resolution of {dt_orig}, resulting in {given_record} days which is in a non-integer number of days.
+        Add {missing_records} records for a complete set of {full_record_high} records with {full_record_high_days} full days or, 
+        Remove {extra_records} records for a complete set of {full_record_low} records with {full_record_low_days} full days.""")
+    else:
+        num_days = int((record_len * dt_orig) / 24) # placeholder
 
     # Build interpolation x-values
     t_new = np.arange(0, num_days, dt / 24)
@@ -1009,7 +1027,7 @@ def process_met_file(df: pd.DataFrame, gage_elev: float, dt: float = 0.25, file_
 def MOD_WET_watershed_preprocessing(easting: np.ndarray, northing: np.ndarray, elev: np.ndarray, outlet_coordinate: np.ndarray,
                                     static_data_file: str | Path,
                                     terrain_flag: bool = True, delineation_flag: bool = True, slope_aspect_flag: bool = True, shade_calc_flag: bool = True,
-                                    develop_plots: Optional[bool] = False, display_plots: Optional[bool] = False, plots_path: Optional[str | Path] = None,
+                                    save_plots: Optional[bool] = False, display_plots: Optional[bool] = False, plots_path: Optional[str | Path] = None,
                                     met_data: Optional[pd.DataFrame] = None, gage_elev: Optional[float] = None, met_data_file: Optional[str | Path] = None,
                                     dt_interp: Optional[float] = 0.25
                                     ) -> None:
@@ -1057,10 +1075,10 @@ def MOD_WET_watershed_preprocessing(easting: np.ndarray, northing: np.ndarray, e
             flag for specifying whether to run shade calculations, requires terrian_flag set to True
 
     Watershed Delineation Plotting Options:
-        develop_plots: 
+        save_plots: 
             boolean, if True, develop and save plots to plot_path
         display_plots: 
-            boolean, if True, displays plots to screen (develop_plots must be set to True)
+            boolean, if True, displays plots to screen (save_plots must be set to True)
         plots_path: 
             location to save watershed delineation plots
 
@@ -1140,7 +1158,7 @@ def MOD_WET_watershed_preprocessing(easting: np.ndarray, northing: np.ndarray, e
 
     # input inspection
     inspect_DEM_data(easting, northing, elev, outlet_coordinate)
-    inspect_plot_option(develop_plots, plots_path, display_plots)
+    inspect_plot_option(save_plots, plots_path, display_plots)
     inspect_paths(static_data_file, met_data_file)
     inspect_met(met_data, dt_interp, gage_elev, met_data_file)
 
@@ -1157,7 +1175,7 @@ def MOD_WET_watershed_preprocessing(easting: np.ndarray, northing: np.ndarray, e
             print("Performing stream delineation...")
             percent_basin_area = 0.01
             mask, flowacc, flowdir, slope_delin, stream_rows, stream_cols = watershed_area_and_stream_delineation(
-                easting, northing, elev, outlet_coordinate, percent_basin_area, develop_plots, display_plots, plots_path
+                easting, northing, elev, outlet_coordinate, percent_basin_area, save_plots, display_plots, plots_path
             )
             # Convert flowdir to COO format
             flowdir = flowdir.tocoo()
@@ -1278,8 +1296,8 @@ def inspect_DEM_data(easting, northing, elev, oc):
     if (oc[0] < east_min) or (oc[0] > east_max) or (oc[1] < north_min) or (oc[1] > north_max):
         sys.exit("Error: Outlet coordinate not contained within DEM grid. Coordinate should be (easting, northing).")
 
-def inspect_plot_option(develop_plots, plots_path, display_plots):
-    if develop_plots:
+def inspect_plot_option(save_plots, plots_path, display_plots):
+    if save_plots:
         if plots_path is not None:
             if isinstance(plots_path, (str, Path)):
                 plots_path = Path(plots_path)
@@ -1288,7 +1306,7 @@ def inspect_plot_option(develop_plots, plots_path, display_plots):
             sys.exit("Invalid or missing plots_path")
     else:
         if display_plots:
-            sys.exit("To display plots, develop_plots must be set to True.")
+            sys.exit("To display plots, save_plots must be set to True.")
 
 def inspect_paths(static_data_file, met_data_file):
     # Static data output inspection

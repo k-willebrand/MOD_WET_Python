@@ -60,7 +60,7 @@ def step_infiltration(model, masksnow: np.ndarray, maskSEB: np.ndarray, PPT0: np
     theta_rz = model.state.Srz / model.params.d_rz
 
     Ipond = f >= model.spatial.K0  # pixels that could potentially experience ponding
-    if np.any(f[Ipond]):  # only call TCA if surface flux greater than Ksat (K0)
+    if np.any(Ipond):  # only call TCA if surface flux greater than Ksat (K0)
         method_flag = 1  # Philip solution
         # Note: This is called every time step with the storm "duration"
         # set to the time step duration. This is a simplification in order

@@ -3,12 +3,13 @@ __pycache__/
 *.pyc
 
 # Ignore all local data and other select folders and scripts
-raw_input_data/
-notebooks/
 obsolete/
 tests/
 plots/
-Project0.py
+bear_creek_figures.py
+data/model_output/bear_creek
+data/model_output/pine_creek
+data_no_repo
 
 # Ignore common spreadsheet and data types
 *.xlsx

@@ -54,8 +54,8 @@ def derive_soil_properties(model) -> None:
     spatial.THETAs = params.THETAs * mask
     spatial.PSIs = params.PSIs * mask
     spatial.b_BC = params.b_BC * mask
-    spatial.K0 = params.K0 * mask
     spatial.T0 = params.T0 * mask
+    spatial.K0 = params.K0 * mask
 
     # 2. Derive Field Capacity (THETAfc) and Permanent Wilting Point (THETApwp) via Brooks-Corey
     #   Note: we need to convert PSIs (m) to (cm)

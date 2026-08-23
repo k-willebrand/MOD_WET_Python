@@ -95,7 +95,7 @@ class PhysicalConstants:
 
         path = Path(csv_path)
         if path.exists():
-            print(f"Warning: File '{csv_path}' will be used to override default physical constants.")
+            print(f"File '{csv_path}' will be used to override default physical constants.")
 
             # Retrieve valid attribute names from the dataclass
             valid_fields = {f.name for f in fields(cls)}
@@ -195,7 +195,7 @@ class ModelParameters:
 
         path = Path(csv_path)
         if path.exists():
-            print(f"Warning: File '{csv_path}' will be used to override default model parameters.")
+            print(f"File '{csv_path}' will be used to override default model parameters.")
 
             field_map = {f.name: f for f in fields(cls)}
             overrides = {}
@@ -556,6 +556,7 @@ class TimeSeriesOutputs:
     Rldown: np.ndarray = field(init=False)                  # Basin-avg downwelling longwave radiation (W/m^2)
     PPT: np.ndarray = field(init=False)                     # Basin-avg precipitation (m)
 
+    # Pixel storage structure needs to be corrected, it's time x num_pixels, not nx x ny
     # Stream Pixel Outputs (3D: nt x nx x ny)
     pixel_stream_hydrograph: np.ndarray = field(init=False) # Stream pixel hydrographs (m^3/s)
 

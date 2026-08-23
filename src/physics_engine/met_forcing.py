@@ -33,14 +33,14 @@ def step_met_forcing_distribution(model, step_idx: int, ts_idx: int):
         distributed incoming longwave radiation
     """
     dt_hours = model.control.dt
-    forcing_idx = model.control.start_time + step_idx
+    # forcing_idx = model.control.start_time + step_idx
 
     # Update time since last snowfall
     if step_idx > 0:
         model.state.NDayLastSnow += dt_hours / 24.0
 
     # Extract Day of Year (DOY) and UTC time
-    current_time = model.forcing.DOY[forcing_idx]
+    current_time = model.forcing.DOY[step_idx]
     doy = int(np.floor(current_time))
     utc = float((current_time - doy) * 24.0)
 
@@ -51,12 +51,12 @@ def step_met_forcing_distribution(model, step_idx: int, ts_idx: int):
 
     # Distribute meteorological forcings
     PPT0, U0, Ta0, Psfc0, qa0, SW0, LWdown0 = distribute_met_forcing(
-        PPT=model.forcing.PPT[forcing_idx],
-        SW=model.forcing.SW[forcing_idx],
-        Ta=model.forcing.Ta[forcing_idx],
-        qa=model.forcing.qa[forcing_idx],
-        U=model.forcing.U[forcing_idx],
-        Psfc=model.forcing.Psfc[forcing_idx],
+        PPT=model.forcing.PPT[step_idx],
+        SW=model.forcing.SW[step_idx],
+        Ta=model.forcing.Ta[step_idx],
+        qa=model.forcing.qa[step_idx],
+        U=model.forcing.U[step_idx],
+        Psfc=model.forcing.Psfc[step_idx],
         maskNaN=model.spatial.maskNaN,
         elev=model.spatial.elev,
         gage_elev=model.forcing.gage_elev,
@@ -79,7 +79,7 @@ def step_met_forcing_distribution(model, step_idx: int, ts_idx: int):
         shade_lookup_table=model.shade.shade_table,
         clear_sky_atmos_emiss_model=model.params.clear_sky_atmos_emiss_model,
         cloudy_sky_atmos_emiss_model=model.params.cloudy_sky_atmos_emiss_model,
-        solar_index=model.forcing.solar_index[forcing_idx],
+        solar_index=model.forcing.solar_index[step_idx],
         LW_up=model.step_vars.Rlup_out,
         g=model.constants.g,
         Rd=model.constants.Rd,

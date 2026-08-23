@@ -39,7 +39,7 @@ def load_static_basin_data(file_path: str | Path, control, spatial, network, sha
 
     # load (or not load) shade lookup table data based on calculation flag
     # Force shade flag to be False
-    shade_flag = ds.shade_calc_flag.copy()
+    shade_flag = True if ds.shade_calc_flag.copy() == 1 else False
     shade_flag = False # comment/delete this to undo the forced shade flag
     if shade_flag:
         shade.shade_calc_flag = True
