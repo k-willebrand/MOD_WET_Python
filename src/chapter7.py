@@ -1,5 +1,66 @@
 import numpy as np
 
+def brooks_corey_PSI_and_K(theta: float | np.ndarray, porosity: float | np.ndarray, Ks: float | np.ndarray, psi_s: float | np.ndarray, b: float | np.ndarray,
+                           ) -> tuple[float | np.ndarray, float | np.ndarray]:
+    """
+    Calculate unsaturated zone matric head and hydraulic conductivity based on Brooks and Corey (1964).
+
+    Parameters
+    ----------
+    theta : float or numpy.ndarray
+        Volumetric soil moisture (-).
+    porosity : float or numpy.ndarray
+        Porosity (-).
+    Ks : float or numpy.ndarray
+        Saturated conductivity [L/T].
+    psi_s : float or numpy.ndarray
+        Saturated matric head [L].
+    b : float or numpy.ndarray
+        Brooks-Corey soil parameter (-).
+
+    Returns
+    -------
+    psi : float or numpy.ndarray
+        Matric head [L].
+    K : float or numpy.ndarray
+        Unsaturated hydraulic conductivity [L/T].
+
+    Notes
+    -----
+    The matric head and hydraulic conductivity are output with the same units as the
+    saturated matric head and saturated hydraulic conductivity, respectively. This
+    function can run for an array of inputs.
+    """
+    # Matric head equation
+    psi = psi_s * (theta / porosity) ** (-b)
+
+    # Hydraulic conductivity equation
+    K = Ks * (theta / porosity) ** (2.0 * b + 3.0)
+
+    return psi, K
+
+def field_capacity(psi_s: float | np.ndarray, b: float | np.ndarray, porosity: float | np.ndarray,) -> float | np.ndarray:
+    """
+    Compute the soil field capacity volumetric soil moisture.
+
+    Parameters
+    ----------
+    psi_s : float or numpy.ndarray
+        Saturated matric head [cm].
+    b : float or numpy.ndarray
+        Brooks-Corey soil parameter (-).
+    porosity : float or numpy.ndarray
+        Porosity (-).
+
+    Returns
+    -------
+    theta_fc : float or numpy.ndarray
+        Field capacity volumetric soil moisture (-).
+    """
+    # Equation
+    theta_fc = porosity * (340.0 / np.abs(psi_s)) ** (-1.0 / b)
+    return theta_fc
+
 def green_ampt(Fc: np.ndarray, theta_0: float, porosity: float, Ks: float, psi_s: float, b: float
                ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -220,4 +281,25 @@ def TCA_infiltration(P: np.ndarray | float, tr: float, t: float, theta_0: np.nda
     qie[I_ks] = 0.0  # no runoff generated
 
     return F, qie
+
+def wilting_point(psi_s: float | np.ndarray, b: float | np.ndarray, porosity: float | np.ndarray,) -> float | np.ndarray:
+    """Compute the soil permanent wilting point volumetric soil moisture.
+
+    Parameters
+    ----------
+    psi_s : float or numpy.ndarray
+        Saturated matric head [cm].
+    b : float or numpy.ndarray
+        Brooks-Corey soil parameter (-).
+    porosity : float or numpy.ndarray
+        Porosity (-).
+
+    Returns
+    -------
+    theta_wp : float or numpy.ndarray
+        Permanent wilting point volumetric soil moisture (-).
+    """
+    # Equation
+    theta_wp = porosity * (15000.0 / np.abs(psi_s)) ** (-1.0 / b)
+    return theta_wp
 

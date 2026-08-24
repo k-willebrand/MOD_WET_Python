@@ -2,8 +2,10 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 from src.chapter2 import air_density, sat_vapor_pressure, sat_vapor_pressure_ice, specific_humidity_to_vp, vp_to_dew_point_temperature, dew_point_temperature_to_vp, vp_to_specific_humidity
-from src.chapter3 import TOA_incoming_solar, cloudy_sky_emiss
+from src.chapter3 import TOA_incoming_solar, cloudy_sky_emiss, disaggregate_SW
 from src.chapter8 import aero_resistance, mass_transfer, richardson_number, stab_corr_factors
+
+# Note: clm_snow_age.m from original MATLAB was an incomplete function and is assumed to be replaced by the diagnostic_snow_density function
 
 def albedo_usace(T_air: np.ndarray, day_counter: np.ndarray, T_f: float, alpha_0: float = 0.4,  K: float = 0.44,
                  ) -> np.ndarray:
@@ -19,6 +21,54 @@ def albedo_usace(T_air: np.ndarray, day_counter: np.ndarray, T_f: float, alpha_0
     Calculates snow albedo using the USACE (1956) formulation."""
     r = np.where(T_air <= T_f, -0.05, -0.12)
     return alpha_0 + K * np.exp(r * day_counter)
+
+def bats_snow_age(tau_s0: float | np.ndarray, dt: float, Tsnow: float | np.ndarray, snowfall: float | np.ndarray, T_f: float = 273.15,
+                  ) -> tuple[float | np.ndarray, float | np.ndarray]:
+    """
+    Calculate non-dimensional snow age for BATS/CLM albedo and density evolution.
+
+    The equations are adapted from Noah-MP Technical Description (Yang et al., 2011).
+
+    Parameters
+    ----------
+    tau_s0 : float or numpy.ndarray
+        Snow age factor from previous time step.
+    dt : float
+        Time step in hours.
+    Tsnow : float or numpy.ndarray
+        Snow surface temperature in K.
+    snowfall : float or numpy.ndarray
+        Snowfall mass flux in mm/hr.
+    T_f : float, default=273.15
+        Water freezing temperature in K.
+
+    Returns
+    -------
+    snow_age : float or numpy.ndarray
+        Nondimensional snow age (-).
+    tau_s_new : float or numpy.ndarray
+        Updated snow age factor.
+    """
+    total_snowfall = snowfall * dt  # Snowfall over timestep (mm)
+    total_snowfall_threshold = 10.0  # Threshold to reset snow age (mm)
+    dt_sec = dt * 3600.0  # Convert time step to seconds
+
+    tau_0 = 1e6  # Time scale factor (seconds)
+    r_1 = np.exp(5000.0 * (1.0 / T_f - 1.0 / Tsnow))
+    r_2 = np.minimum(r_1**10, 1.0)
+    r_3 = 0.3
+    del_tau_s = (r_1 + r_2 + r_3) * dt_sec / tau_0
+
+    tau_s_new = (tau_s0 + del_tau_s) * (
+        1.0 - np.maximum(0.0, total_snowfall) / total_snowfall_threshold
+    )
+
+    # Reset age factor to zero where total snowfall exceeds threshold
+    tau_s_new = np.where(total_snowfall > total_snowfall_threshold, 0.0, tau_s_new)
+
+    snow_age = tau_s_new / (1.0 + tau_s_new)
+
+    return snow_age, tau_s_new
 
 def diagnostic_snow_density(density: np.ndarray, SWE: np.ndarray, dt: float,  snowfall: np.ndarray, 
                             min_density: float=100, max_density: float=450, tau_f: float=0.24, tau_1: float=86400
@@ -71,18 +121,6 @@ def diagnostic_snow_fraction(snow_depth: np.ndarray, h_soil: float | np.ndarray)
     """Calculates fractional snow-covered area based on the BATS model."""
     return snow_depth / (snow_depth + h_soil)
 
-def disaggregate_Tair(Tair: float | np.ndarray, elevationPixel: np.ndarray, gage_elev: float, LapseRateTair: float
-                      ) -> tuple[np.ndarray, np.ndarray]:
-    """Disaggregates air temperature across grid cells using elevation and lapse rate.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray]: (Tair_disagg, Tair_mean)
-    """
-
-    Tair_disagg = Tair + LapseRateTair * (elevationPixel - gage_elev)
-    Tair_mean = (Tair + Tair_disagg) / 2.0
-    return Tair_disagg, Tair_mean
-
 def disaggregate_PPT(PPT: np.ndarray, elevation_pixel: np.ndarray, gage_elev: float, lapse_rate_ppt: float
                      ) -> np.ndarray:
     """Disaggregates precipitation field based on elevation lapse rate."""
@@ -106,176 +144,17 @@ def disaggregate_qair(qa: np.ndarray, press: np.ndarray, press_disagg: np.ndarra
     e_pix = dew_point_temperature_to_vp(Td_pix, T_0=T_0, e_s0=e_s0, Lv=Lv, Rv=Rv)
     return vp_to_specific_humidity(e_pix, press_disagg, epsilon=epsilon)
 
-def disaggregate_SW(
-    SWin: np.ndarray,
-    press: np.ndarray,
-    slope_rad: np.ndarray,
-    aspect_rad: np.ndarray,
-    zenith_rad: float,
-    azimuth_rad: float,
-    hrangle: float,
-    shade: np.ndarray,
-    SVF: np.ndarray,
-    sunrise: float,
-    sunset: float,
-    RsTOA: float,
-    mask: np.ndarray,
-    albedo: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def disaggregate_Tair(Tair: float | np.ndarray, elevationPixel: np.ndarray, gage_elev: float, LapseRateTair: float
+                      ) -> tuple[np.ndarray, np.ndarray]:
+    """Disaggregates air temperature across grid cells using elevation and lapse rate.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: (Tair_disagg, Tair_mean)
     """
-    Description:
-    This function disaggregates the incoming shortwave radiation flux at the
-    suface by accounting for topographic (slope and aspect) effects.
 
-    Based on disaggregation methods in Allen et al. (2006) and Muller and 
-    Scherer (2005) and modified for application in CEE 150.
-
-    Inputs:
-    SWin: Incoming shortwave radiation data on a horizontal plane array (W/m^2)
-    press: Disaggregated pressure data array (Pa)
-    slope_rad: Slope (radians)
-    aspect_rad: Aspect (radians)
-    zenith_rad: Solar zenith angle (radians)
-    azimuth_rad: Solar azimuth angle (radians)
-    hrangle: Hour angle (radians)
-    shade: Shade array
-    SVF: Sky view factor array
-    sunrise: Local hour of sunrise
-    sunset: Local hour of sunset
-    RsTOA: TOA solar flux at central lat/lon (W/m^2)
-    mask: Basin mask array
-    albedo: albedo map array
-
-    Outputs:
-    Rs: Total incident radiation at the surface (W/m^2)
-    RsDir: Direct beam solar flux: RsDir (W/m^2)
-    RsDif: Diffuse solar flux (W/m^2)
-
-    Note: Can run for a single time over a spatial domain
-    """
-    nx, ny = mask.shape
-
-    # Assumed parameters
-    Gamma_SW = 1.0  # Solar flux correction factor
-    press_mean_areal = np.nanmean(press)
-    AlbedoSurrounding = np.full((nx, ny), np.nan)
-    AlbedoSurrounding[:, :] = albedo  # Surrounding albedo associated with mean areal data
-
-    # Allocate
-    tau_SW_hor = np.full((nx, ny), np.nan)
-    K_B_hor = np.full((nx, ny), np.nan)
-    RsDir = np.full((nx, ny), np.nan)
-    fcor = np.full((nx, ny), np.nan)
-    RsDif = np.full((nx, ny), np.nan)
-
-    # Perform over mask
-    imask = (mask == 1)
-
-    # Cosine of solar zenith angle
-    cos_sza_hor = np.cos(zenith_rad)
-
-    # Ensure SWin is a broadcastable array matching spatial grid shape
-    SWin = np.array(SWin, dtype=float)
-    if SWin.ndim == 0:
-        SWin = np.full((nx, ny), SWin)
-
-    # Adjust mean areal SW forcings
-    SWin = SWin * Gamma_SW
-
-    ## Disaggregate incoming shortwave radiation at the surface from mean areal data:
-    # Partition direct from diffuse flux
-
-    # For clear sky: broadband atmos. transmissivity= Solar insolation horizontal / TOA solar radiation
-    if RsTOA == 0.0:
-        tau_SW_hor[imask] = 0.0
-    else:
-        tau_SW_hor[imask] = SWin[imask] / RsTOA
-
-    # Direct beam transmissivity (based on Allen et al. 2006 paper)
-    ind = (tau_SW_hor <= 0.175) & (mask == 1)
-    K_B_hor[ind] = 0.016 * tau_SW_hor[ind]
-
-    ind = (tau_SW_hor > 0.175) & (tau_SW_hor < 0.42) & (mask == 1)
-    K_B_hor[ind] = (0.022 - 0.280 * tau_SW_hor[ind] +
-                    0.828 * tau_SW_hor[ind]**2.0 + 0.765 * tau_SW_hor[ind]**3.0)
-
-    ind = (tau_SW_hor >= 0.42) & (mask == 1)
-    K_B_hor[ind] = 1.56 * tau_SW_hor[ind] - 0.55
-
-    ind = (K_B_hor > tau_SW_hor) & (mask == 1)
-    K_B_hor[ind] = tau_SW_hor[ind]
-
-    # Diffuse beam transmissivity
-    K_D_hor = tau_SW_hor - K_B_hor
-
-    K_B_hor[K_B_hor < 0.0] = 0.0
-
-    # Check tau values at night vs. day
-    SWin[tau_SW_hor == 0.0] = 0.0
-    SWin[SWin < 0.0] = 0.0
-
-    # Elevation angle
-    ThetaS = np.pi / 2.0 - zenith_rad  # radians
-
-    # Sunrise/sunset at local time
-    sunrise_rad = (sunrise - 12.0) * np.pi / 12.0
-    sunset_rad = (sunset - 12.0) * np.pi / 12.0
-
-    ## Disaggregate direct component for Elevation/Topography:
-    with np.errstate(divide='ignore'): # suppress divide by zero encountered in log warning
-        t_MeanAreal = -np.log(np.nanmean(K_B_hor))  # Optical depth associated with mean areal data
-    tElev = t_MeanAreal * (press / press_mean_areal)  # At the pixel elevation optical depth
-    KB_elev_Sch = np.exp(-tElev)  # Trasmissivity of the direct component at the pixel elevation
-    RsDir_Elev = KB_elev_Sch * RsTOA  # Direct flux at the pixel elevation
-
-    # Check if slope is obstructed from sun and apply thresholds to avoid 
-    # numerical issues at times close to sunset/sunrise.
-    with np.errstate(divide='ignore', invalid='ignore'): # suppress divide by zero encountered in divide warning
-        ConstCheck = (np.tan(slope_rad) / np.tan(ThetaS) * np.cos(azimuth_rad - aspect_rad) + 1.0)
-    ind = ((ConstCheck > 0.0) & (cos_sza_hor > 0.001) &
-           (hrangle > (sunrise_rad + 0.001)) & (hrangle < (sunset_rad - 0.001)) &
-           (ThetaS > (np.pi / 180.0)) & (mask == 1))
-
-    # Slice spatial arrays where applicable
-    slope_i = slope_rad[ind] if isinstance(slope_rad, np.ndarray) and slope_rad.shape == mask.shape else slope_rad
-    aspect_i = aspect_rad[ind] if isinstance(aspect_rad, np.ndarray) and aspect_rad.shape == mask.shape else aspect_rad
-    shade_i = shade[ind] if isinstance(shade, np.ndarray) and shade.shape == mask.shape else shade
-
-    fcor[ind] = shade_i * (1.0 + np.tan(slope_i) / np.tan(ThetaS) * np.cos(azimuth_rad - aspect_i))
-    RsDir[ind] = RsDir_Elev[ind] * fcor[ind]
-
-    # Account for remaining pixels in mask
-    ind2 = imask & ~ind
-    RsDir[ind2] = 0.0
-
-    ## Disaggregate diffuse component for elevation/SVF/reflection term...
-    # Define the mean areal data diffuse component. Apply thresholds to avoid 
-    # numerical issues at times close to sunset/sunrise.
-    ind = ((tau_SW_hor > 0.001) & (hrangle > (sunrise_rad + 0.001)) &
-           (hrangle < (sunset_rad - 0.001)) & (cos_sza_hor > 0.001) &
-           (K_D_hor > 0.001) & (ThetaS > (np.pi / 180.0)) & (mask == 1))
-    E_Sdiff = SWin[ind] * K_D_hor[ind] / tau_SW_hor[ind]
-
-    # Disaggregate diffuse component for elevation
-    P0 = 101325.0  # Nominal surface pressure, Pa
-    Mz = (1.0 - 0.027 * np.exp(2.0 * press[ind] / P0)) * (1.075 - 0.105 * np.log(1.0 / cos_sza_hor))
-    M_MeanAreal = (1.0 - 0.027 * np.exp(2.0 * press_mean_areal / P0)) * (1.075 - 0.105 * np.log(1.0 / cos_sza_hor))
-    with np.errstate(over='ignore'): # suppress overflow encountered in exp warning
-        RsDif_Elev = E_Sdiff * ((Mz - np.exp(-tElev[ind] / cos_sza_hor)) / (M_MeanAreal - np.exp(-t_MeanAreal / cos_sza_hor)))
-
-    # Reflection term
-    SVF_i = SVF[ind] if isinstance(SVF, np.ndarray) and SVF.shape == mask.shape else SVF
-    ToTSW_Elev = RsDif_Elev * SVF_i + RsDir[ind]
-    RsDif[ind] = RsDif_Elev * SVF_i + (AlbedoSurrounding[ind] * ToTSW_Elev) * (1.0 - SVF_i)
-
-    # Account for remaining pixels in mask
-    ind2 = imask & ~ind
-    RsDif[ind2] = 0.0
-
-    ## Compute total SW flux
-    Rs = RsDif + RsDir  # W/m^2
-
-    return Rs, RsDir, RsDif
+    Tair_disagg = Tair + LapseRateTair * (elevationPixel - gage_elev)
+    Tair_mean = (Tair + Tair_disagg) / 2.0
+    return Tair_disagg, Tair_mean
 
 def distribute_met_forcing(
     PPT: float,

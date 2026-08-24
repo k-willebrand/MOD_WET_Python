@@ -1,8 +1,45 @@
 import numpy as np
+import re
 from tqdm import tqdm
 from typing import Tuple, Union, Optional
+from pyproj import Transformer
 
 from src.chapter2 import Wp_from_near_surface_met_data
+
+# Note: utm2deg.m from original MATLAB code overwritten by new parse_utm_epsg function and 
+#       revised easting_northing_to_lat_lon function, which uses pyproj library
+
+def clear_sky_emiss(e: np.ndarray, T: np.ndarray, model_name: str, T_0: float = 273.15, e_s0: float = 611.0, Lv: float = 2.5e6, Rv: float = 461.0,) -> np.ndarray:
+    """Computes clear-sky atmospheric emissivity.
+    Inputs:
+        e: (near-surface) Vapor pressure in mb (1mb=100Pa)
+        T: (near-surface) air temperature (K)
+        clear_model_name : descriptor of which model to use:
+                = 'brunt' : use Brunt (1932) model
+                = 'brutsaert' : use Brutsaert (1975) model (default)
+                = 'satterlund' : use Satterlund (1979) model
+                = 'prata' : use Prata (1996) model
+                = 'idso' : use Idso (1981?) model
+    *** Note: default fall-back is brutsaert
+    """
+    model_name = str(model_name).lower()
+    if model_name == 'brunt':
+        return 0.605 + 0.048 * np.sqrt(e)
+    elif model_name == 'brutsaert':
+        return 1.24 * (e / T) ** (0.14)
+    elif model_name == 'satterlund':
+        return 1.08 * (1.0 - np.exp(- (e ** (T / 2016.0))))
+    elif model_name == 'prata':
+        # convert vapor pressure to Pa for precip. water function call
+        e = e * 100 # Pa
+        # compute precipitable water (in cm)
+        Wp = Wp_from_near_surface_met_data(e, T, model_name, T_0=T_0, e_s0=e_s0, Lv=Lv, Rv=Rv)
+        return 1.0 - (1.0 + Wp) * np.exp(- np.sqrt(1.2 + 3.0 * Wp))
+    elif model_name == 'idso':
+        return 0.74 + 0.0049 * e
+    else:
+        # Default fallback (Brutsaert)
+        return 1.24 * (e / T) ** (0.14)
 
 def clear_sky_shortwave_radiation(
     RsTOA: Union[float, np.ndarray],
@@ -63,38 +100,6 @@ def clear_sky_shortwave_radiation(
             f"Unsupported clear-sky shortwave model: '{model_name}'. Expected 'dingman' or 'crawford'."
         )
 
-def clear_sky_emiss(e: np.ndarray, T: np.ndarray, model_name: str, T_0: float, e_s0: float, Lv: float, Rv: float) -> np.ndarray:
-    """Computes clear-sky atmospheric emissivity.
-    Inputs:
-        e: (near-surface) Vapor pressure in mb (1mb=100Pa)
-        T: (near-surface) air temperature (K)
-        clear_model_name : descriptor of which model to use:
-                = 'brunt' : use Brunt (1932) model
-                = 'brutsaert' : use Brutsaert (1975) model (default)
-                = 'satterlund' : use Satterlund (1979) model
-                = 'prata' : use Prata (1996) model
-                = 'idso' : use Idso (1981?) model
-    *** Note: default fall-back is brutsaert
-    """
-    model_name = str(model_name).lower()
-    if model_name == 'brunt':
-        return 0.605 + 0.048 * np.sqrt(e)
-    elif model_name == 'brutsaert':
-        return 1.24 * (e / T) ** (0.14)
-    elif model_name == 'satterlund':
-        return 1.08 * (1.0 - np.exp(- (e ** (T / 2016.0))))
-    elif model_name == 'prata':
-        # convert vapor pressure to Pa for precip. water function call
-        e = e * 100 # Pa
-        # compute precipitable water (in cm)
-        Wp = Wp_from_near_surface_met_data(e, T, model_name, T_0=T_0, e_s0=e_s0, Lv=Lv, Rv=Rv)
-        return 1.0 - (1.0 + Wp) * np.exp(- np.sqrt(1.2 + 3.0 * Wp))
-    elif model_name == 'idso':
-        return 0.74 + 0.0049 * e
-    else:
-        # Default fallback (Brutsaert)
-        return 1.24 * (e / T) ** (0.14)
-
 def cloudy_sky_emiss(e: np.ndarray, T: np.ndarray, clear_model_name: str, C: float, S: float, cloudy_model_name: str,
                      T_0: float, e_s0: float, Lv: float, Rv: float) -> np.ndarray:
     """Computes effective atmospheric emissivity under clear or cloudy sky conditions.
@@ -113,7 +118,7 @@ def cloudy_sky_emiss(e: np.ndarray, T: np.ndarray, clear_model_name: str, C: flo
                 = 'kustas' : use Kustas (1994) model
                 = 'crawford' : use Crawford and Duchon (1999) model
     """
-    clear_sky_atmos_emissivity = clear_sky_emiss(e, T, clear_model_name, T_0, e_s0, Lv, Rv)
+    clear_sky_atmos_emissivity = clear_sky_emiss(e, T, clear_model_name, T_0=T_0, e_s0=e_s0, Lv=Lv, Rv=Rv)
 
     if cloudy_model_name == 'kustas':
         return (1.0 + 0.22 * (C ** 2)) * clear_sky_atmos_emissivity
@@ -245,6 +250,197 @@ def direct_sw_transmissivity(
     tau_sa = np.exp(a_sa + b_sa * Mopt)
     return tau_sa - gamma_dust
 
+def disaggregate_SW(
+    SWin: np.ndarray,
+    press: np.ndarray,
+    slope_rad: np.ndarray,
+    aspect_rad: np.ndarray,
+    zenith_rad: float,
+    azimuth_rad: float,
+    hrangle: float,
+    shade: np.ndarray,
+    SVF: np.ndarray,
+    sunrise: float,
+    sunset: float,
+    RsTOA: float,
+    mask: np.ndarray,
+    albedo: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Description:
+    This function disaggregates the incoming shortwave radiation flux at the
+    suface by accounting for topographic (slope and aspect) effects.
+
+    Based on disaggregation methods in Allen et al. (2006) and Muller and 
+    Scherer (2005) and modified for application in CEE 150.
+
+    Inputs:
+    SWin: Incoming shortwave radiation data on a horizontal plane array (W/m^2)
+    press: Disaggregated pressure data array (Pa)
+    slope_rad: Slope (radians)
+    aspect_rad: Aspect (radians)
+    zenith_rad: Solar zenith angle (radians)
+    azimuth_rad: Solar azimuth angle (radians)
+    hrangle: Hour angle (radians)
+    shade: Shade array
+    SVF: Sky view factor array
+    sunrise: Local hour of sunrise
+    sunset: Local hour of sunset
+    RsTOA: TOA solar flux at central lat/lon (W/m^2)
+    mask: Basin mask array
+    albedo: albedo map array
+
+    Outputs:
+    Rs: Total incident radiation at the surface (W/m^2)
+    RsDir: Direct beam solar flux: RsDir (W/m^2)
+    RsDif: Diffuse solar flux (W/m^2)
+
+    Note: Can run for a single time over a spatial domain
+    """
+    nx, ny = mask.shape
+
+    # Assumed parameters
+    Gamma_SW = 1.0  # Solar flux correction factor
+    press_mean_areal = np.nanmean(press)
+    AlbedoSurrounding = np.full((nx, ny), np.nan)
+    AlbedoSurrounding[:, :] = albedo  # Surrounding albedo associated with mean areal data
+
+    # Allocate
+    tau_SW_hor = np.full((nx, ny), np.nan)
+    K_B_hor = np.full((nx, ny), np.nan)
+    RsDir = np.full((nx, ny), np.nan)
+    fcor = np.full((nx, ny), np.nan)
+    RsDif = np.full((nx, ny), np.nan)
+
+    # Perform over mask
+    imask = (mask == 1)
+
+    # Cosine of solar zenith angle
+    cos_sza_hor = np.cos(zenith_rad)
+
+    # Ensure SWin is a broadcastable array matching spatial grid shape
+    SWin = np.array(SWin, dtype=float)
+    if SWin.ndim == 0:
+        SWin = np.full((nx, ny), SWin)
+
+    # Adjust mean areal SW forcings
+    SWin = SWin * Gamma_SW
+
+    ## Disaggregate incoming shortwave radiation at the surface from mean areal data:
+    # Partition direct from diffuse flux
+
+    # For clear sky: broadband atmos. transmissivity= Solar insolation horizontal / TOA solar radiation
+    if RsTOA == 0.0:
+        tau_SW_hor[imask] = 0.0
+    else:
+        tau_SW_hor[imask] = SWin[imask] / RsTOA
+
+    # Direct beam transmissivity (based on Allen et al. 2006 paper)
+    ind = (tau_SW_hor <= 0.175) & (mask == 1)
+    K_B_hor[ind] = 0.016 * tau_SW_hor[ind]
+
+    ind = (tau_SW_hor > 0.175) & (tau_SW_hor < 0.42) & (mask == 1)
+    K_B_hor[ind] = (0.022 - 0.280 * tau_SW_hor[ind] +
+                    0.828 * tau_SW_hor[ind]**2.0 + 0.765 * tau_SW_hor[ind]**3.0)
+
+    ind = (tau_SW_hor >= 0.42) & (mask == 1)
+    K_B_hor[ind] = 1.56 * tau_SW_hor[ind] - 0.55
+
+    ind = (K_B_hor > tau_SW_hor) & (mask == 1)
+    K_B_hor[ind] = tau_SW_hor[ind]
+
+    # Diffuse beam transmissivity
+    K_D_hor = tau_SW_hor - K_B_hor
+
+    K_B_hor[K_B_hor < 0.0] = 0.0
+
+    # Check tau values at night vs. day
+    SWin[tau_SW_hor == 0.0] = 0.0
+    SWin[SWin < 0.0] = 0.0
+
+    # Elevation angle
+    ThetaS = np.pi / 2.0 - zenith_rad  # radians
+
+    # Sunrise/sunset at local time
+    sunrise_rad = (sunrise - 12.0) * np.pi / 12.0
+    sunset_rad = (sunset - 12.0) * np.pi / 12.0
+
+    ## Disaggregate direct component for Elevation/Topography:
+    with np.errstate(divide='ignore'): # suppress divide by zero encountered in log warning
+        t_MeanAreal = -np.log(np.nanmean(K_B_hor))  # Optical depth associated with mean areal data
+    tElev = t_MeanAreal * (press / press_mean_areal)  # At the pixel elevation optical depth
+    KB_elev_Sch = np.exp(-tElev)  # Trasmissivity of the direct component at the pixel elevation
+    RsDir_Elev = KB_elev_Sch * RsTOA  # Direct flux at the pixel elevation
+
+    # Check if slope is obstructed from sun and apply thresholds to avoid 
+    # numerical issues at times close to sunset/sunrise.
+    with np.errstate(divide='ignore', invalid='ignore'): # suppress divide by zero encountered in divide warning
+        ConstCheck = (np.tan(slope_rad) / np.tan(ThetaS) * np.cos(azimuth_rad - aspect_rad) + 1.0)
+    ind = ((ConstCheck > 0.0) & (cos_sza_hor > 0.001) &
+           (hrangle > (sunrise_rad + 0.001)) & (hrangle < (sunset_rad - 0.001)) &
+           (ThetaS > (np.pi / 180.0)) & (mask == 1))
+
+    # Slice spatial arrays where applicable
+    slope_i = slope_rad[ind] if isinstance(slope_rad, np.ndarray) and slope_rad.shape == mask.shape else slope_rad
+    aspect_i = aspect_rad[ind] if isinstance(aspect_rad, np.ndarray) and aspect_rad.shape == mask.shape else aspect_rad
+    shade_i = shade[ind] if isinstance(shade, np.ndarray) and shade.shape == mask.shape else shade
+
+    fcor[ind] = shade_i * (1.0 + np.tan(slope_i) / np.tan(ThetaS) * np.cos(azimuth_rad - aspect_i))
+    RsDir[ind] = RsDir_Elev[ind] * fcor[ind]
+
+    # Account for remaining pixels in mask
+    ind2 = imask & ~ind
+    RsDir[ind2] = 0.0
+
+    ## Disaggregate diffuse component for elevation/SVF/reflection term...
+    # Define the mean areal data diffuse component. Apply thresholds to avoid 
+    # numerical issues at times close to sunset/sunrise.
+    ind = ((tau_SW_hor > 0.001) & (hrangle > (sunrise_rad + 0.001)) &
+           (hrangle < (sunset_rad - 0.001)) & (cos_sza_hor > 0.001) &
+           (K_D_hor > 0.001) & (ThetaS > (np.pi / 180.0)) & (mask == 1))
+    E_Sdiff = SWin[ind] * K_D_hor[ind] / tau_SW_hor[ind]
+
+    # Disaggregate diffuse component for elevation
+    P0 = 101325.0  # Nominal surface pressure, Pa
+    Mz = (1.0 - 0.027 * np.exp(2.0 * press[ind] / P0)) * (1.075 - 0.105 * np.log(1.0 / cos_sza_hor))
+    M_MeanAreal = (1.0 - 0.027 * np.exp(2.0 * press_mean_areal / P0)) * (1.075 - 0.105 * np.log(1.0 / cos_sza_hor))
+    with np.errstate(over='ignore'): # suppress overflow encountered in exp warning
+        RsDif_Elev = E_Sdiff * ((Mz - np.exp(-tElev[ind] / cos_sza_hor)) / (M_MeanAreal - np.exp(-t_MeanAreal / cos_sza_hor)))
+
+    # Reflection term
+    SVF_i = SVF[ind] if isinstance(SVF, np.ndarray) and SVF.shape == mask.shape else SVF
+    ToTSW_Elev = RsDif_Elev * SVF_i + RsDir[ind]
+    RsDif[ind] = RsDif_Elev * SVF_i + (AlbedoSurrounding[ind] * ToTSW_Elev) * (1.0 - SVF_i)
+
+    # Account for remaining pixels in mask
+    ind2 = imask & ~ind
+    RsDif[ind2] = 0.0
+
+    ## Compute total SW flux
+    Rs = RsDif + RsDir  # W/m^2
+
+    return Rs, RsDir, RsDif
+
+def easting_northing_to_lat_lon(easting_1d: np.ndarray, northing_1d: np.ndarray, utm_zone_str: str) -> tuple[np.ndarray, np.ndarray]:
+    """Convert 1D Easting and Northing UTM vectors into 1D lat/lon vectors"""
+
+    # Parse UTM zone string 
+    epsg = parse_utm_epsg(utm_zone_str)
+
+    transformer = Transformer.from_crs(
+        f"EPSG:{epsg}", "EPSG:4326", always_xy=True
+    )
+
+    # Create 2D meshgrid arrays from 1D coordinate vectors
+    E, N = np.meshgrid(easting_1d, northing_1d)
+    lon_2d, lat_2d = transformer.transform(E, N)
+
+    # Collapse to 1D vectors
+    lat_1d = np.mean(lat_2d, axis=1)  # Mean across columns
+    lon_1d = np.mean(lon_2d, axis=0)  # Mean across rows
+
+    return lat_1d, lon_1d
+
 def generate_slope_and_aspect_from_DEM(elev: np.ndarray, easting: np.ndarray, northing: np.ndarray
                                        ) -> tuple[np.ndarray, np.ndarray]:
     """
@@ -339,11 +535,222 @@ def generate_slope_and_aspect_from_DEM(elev: np.ndarray, easting: np.ndarray, no
 
     return slope, aspect
 
+def longwave_flux(e: float | np.ndarray, Ta: float | np.ndarray, Ts: float | np.ndarray, surf_emissivity: float | np.ndarray, SB_const: float = 5.67e-8,
+                  ) -> tuple[float | np.ndarray, float | np.ndarray, float | np.ndarray]:
+    """
+    Compute the net, incoming, and outgoing longwave fluxes.
+
+    Parameters
+    ----------
+    e : float or numpy.ndarray
+        Vapor pressure in mb.
+    Ta : float or numpy.ndarray
+        Air temperature in K.
+    Ts : float or numpy.ndarray
+        Surface temperature in K.
+    surf_emissivity : float or numpy.ndarray
+        Surface emissivity.
+    SB_const : float, default=5.67e-8
+        Stefan-Boltzmann constant in W/m^2/K^4.
+
+    Returns
+    -------
+    Rl_net : float or numpy.ndarray
+        Net longwave flux in W/m^2.
+    Rl_in : float or numpy.ndarray
+        Incoming longwave flux in W/m^2.
+    Rl_out : float or numpy.ndarray
+        Outgoing longwave flux in W/m^2.
+
+    Notes
+    -----
+    This function can run for an array of inputs.
+    Requires clear_sky_emiss function.
+    """
+    # Compute longwave using Idso model for atmospheric emissivity
+    Rl_in = clear_sky_emiss(e, Ta, "idso") * SB_const * Ta**4
+    Rl_out = surf_emissivity * SB_const * Ts**4
+
+    # Compute net longwave
+    Rl_net = Rl_in - Rl_out
+
+    return Rl_net, Rl_in, Rl_out
+
 def optical_depth(
     zenith_rad: Union[float, np.ndarray]
 ) -> Union[float, np.ndarray]:
     """Computes atmospheric optical depth mass from solar zenith angle (radians)."""
     return 1.0 / np.cos(zenith_rad)
+
+def parse_utm_epsg(utmzone_str: str) -> int:
+    """Parse any UTM zone string into its corresponding EPSG code."""
+    # Matches zone number and optional band/hemisphere indicator
+    match = re.match(r"^(\d{1,2})\s*([A-Za-z]+)?$", utmzone_str.strip())
+    if not match:
+        raise ValueError(f"Invalid UTM zone format: '{utmzone_str}'. Standard format is [<Zone Number> <Latitude Band Letter>] (e.g., 10 S, 32 T, 18 M)")
+    zone = int(match.group(1))
+    if not (1 <= zone <= 60):
+        raise ValueError(f"UTM zone must be between 1 and 60, got {zone}")
+    indicator = (match.group(2) or "N").upper()
+    # 1. Handle explicit hemisphere words
+    if indicator in ("SOUTH", "SOUTHERN"):
+        is_south = True
+    elif indicator in ("NORTH", "NORTHERN"):
+        is_south = False
+    # 2. Handle MGRS Latitude Bands (C through M = South; N through X = North)
+    else:
+        is_south = indicator[0] <= "M"
+    return (32700 if is_south else 32600) + zone
+
+def solar_geometry(DOY: float | np.ndarray, UTC: float | np.ndarray, time_zone_shift: float, lat_deg: float, lon_deg: float
+                   ) -> tuple[float | np.ndarray,
+                              float | np.ndarray,
+                              float | np.ndarray,
+                              float | np.ndarray,
+                              float | np.ndarray,
+                              float | np.ndarray]:
+    """Computes solar zenith/azimuth angles, sunrise/sunset hours, declination, and hour angle.
+
+    Returns:
+        Tuple: (zenith_angle_deg, azimuth_angle_deg, sunrise, sunset, solar_decl, hour_angle)
+    """
+    latrad = np.radians(lat_deg)
+
+    # Local time and Day-of-Year adjustment for time zone
+    time_local = UTC + time_zone_shift
+    doy_adjusted = np.where(time_local < 0.0, DOY - 1.0, DOY)
+    time_local = np.where(time_local < 0.0, 24.0 + time_local, time_local)
+
+    # Day angle in radians
+    day_angle = 2.0 * np.pi * (doy_adjusted - 1.0) / 365.0
+
+    # Solar declination angle (radians)
+    solar_decl = (
+        0.006918
+        - 0.399912 * np.cos(day_angle)
+        + 0.070257 * np.sin(day_angle)
+        - 0.006758 * np.cos(2.0 * day_angle)
+        + 0.000907 * np.sin(2.0 * day_angle)
+        - 0.002697 * np.cos(3.0 * day_angle)
+        + 0.001480 * np.sin(3.0 * day_angle)
+    )
+
+    # Local standard time meridian (degrees) & Equation of Time (minutes)
+    LSTM = 15.0 * time_zone_shift
+    B = 360.0 / 365.0 * (doy_adjusted - 81.0)
+    EofT_min2 = (
+        9.87 * np.sin(np.radians(2.0 * B))
+        - 7.53 * np.cos(np.radians(B))
+        - 1.5 * np.sin(np.radians(B))
+    )
+
+    # Time correction (minutes) and local solar time (hours)
+    TC = 4.0 * (lon_deg - LSTM) + EofT_min2
+    LST = time_local + TC / 60.0
+
+    # Hour angle (radians)
+    hour_angle = 15.0 * (LST - 12.0) * np.pi / 180.0
+
+    # Solar zenith angle (radians)
+    cos_zenith = np.sin(latrad) * np.sin(solar_decl) + np.cos(latrad) * np.cos(
+        solar_decl
+    ) * np.cos(hour_angle)
+    zenith_angle = np.arccos(np.clip(cos_zenith, -1.0, 1.0))
+
+    # Solar azimuth angle (radians)
+    cos_azimuth = (
+        np.sin(solar_decl) * np.cos(latrad)
+        - np.cos(solar_decl) * np.sin(latrad) * np.cos(hour_angle)
+    ) / np.sin(zenith_angle)
+    azimuth_angle = np.arccos(np.clip(cos_azimuth, -1.0, 1.0))
+    azimuth_angle = np.where(
+        LST > 12.0, 2.0 * np.pi - azimuth_angle, azimuth_angle
+    )
+
+    zenith_angle_deg = np.degrees(zenith_angle)
+    azimuth_angle_deg = np.degrees(azimuth_angle)
+
+    # Sunrise / sunset hours in local time
+    cos_sun_angle = -np.sin(latrad) * np.sin(solar_decl) / (
+        np.cos(latrad) * np.cos(solar_decl)
+    )
+    sun_hour_term = (180.0 / (15.0 * np.pi)) * np.arccos(
+        np.clip(cos_sun_angle, -1.0, 1.0)
+    )
+
+    sunrise = 12.0 - sun_hour_term - TC / 60.0
+    sunset = 12.0 + sun_hour_term - TC / 60.0
+
+    return (
+        zenith_angle_deg,
+        azimuth_angle_deg,
+        sunrise,
+        sunset,
+        solar_decl,
+        hour_angle,
+    )
+
+def sw_cloud_attenuation_factor(C: float | np.ndarray,) -> float | np.ndarray:
+    """
+    Compute the empirical shortwave cloud attenuation factor based on Bras (1990).
+
+    Parameters
+    ----------
+    C : float or numpy.ndarray
+        Areal cloud cover fraction (-).
+
+    Returns
+    -------
+    f_sc : float or numpy.ndarray
+        Shortwave cloud attenuation factor.
+    """
+    # Shortwave cloud attenuation factor
+    f_sc = 1.0 - 0.65 * C**2
+    return f_sc
+
+def TOA_incoming_solar(DOY: float | np.ndarray, UTC: float | np.ndarray, time_zone_shift: float, lat_deg: float, lon_deg: float, S0: float
+                       ) -> tuple[float | np.ndarray,
+                                  float | np.ndarray,
+                                  float | np.ndarray,
+                                  float | np.ndarray,
+                                  float | np.ndarray,
+                                  float | np.ndarray]:
+    """Computes Top of Atmosphere (TOA) incident solar flux and solar geometry parameters.
+
+    Returns:
+        Tuple: (RsTOA, zenith_angle_deg, azimuth_angle_deg, sunrise, sunset, solar_decl, hour_angle)
+    """
+    # Compute solar geometry parameters via helper function
+    (
+        zenith_angle_deg,
+        azimuth_angle_deg,
+        sunrise,
+        sunset,
+        solar_decl,
+        hour_angle,
+    ) = solar_geometry(DOY, UTC, time_zone_shift, lat_deg, lon_deg)
+
+    # Ratio of actual to mean Earth-Sun distance (-)
+    r = 1.0 + 0.017 * np.cos(2.0 * np.pi / 365.0 * (186.0 - DOY))
+
+    # Cap zenith angle at 90 degrees (below horizon set to horizon)
+    zenith_angle_deg = np.minimum(zenith_angle_deg, 90.0)
+
+    # Convert zenith angle to radians
+    theta = np.radians(zenith_angle_deg)
+
+    # Calculate TOA Solar Radiation (W/m^2)
+    RsTOA = S0 * np.cos(theta) / (r**2)
+
+    return (
+        RsTOA,
+        zenith_angle_deg,
+        azimuth_angle_deg,
+        sunrise,
+        sunset,
+        solar_decl,
+        hour_angle,
+    )
 
 def topo_shade_calc(saltitude: float, sazimuth: float, easting: np.ndarray, northing: np.ndarray, elev: np.ndarray
                     ) -> np.ndarray:
@@ -651,134 +1058,3 @@ def topo_shade_calc(saltitude: float, sazimuth: float, easting: np.ndarray, nort
     shade = np.rot90(shlg, k=1)
     return shade
 
-def solar_geometry(DOY: float | np.ndarray, UTC: float | np.ndarray, time_zone_shift: float, lat_deg: float, lon_deg: float
-                   ) -> tuple[float | np.ndarray,
-                              float | np.ndarray,
-                              float | np.ndarray,
-                              float | np.ndarray,
-                              float | np.ndarray,
-                              float | np.ndarray]:
-    """Computes solar zenith/azimuth angles, sunrise/sunset hours, declination, and hour angle.
-
-    Returns:
-        Tuple: (zenith_angle_deg, azimuth_angle_deg, sunrise, sunset, solar_decl, hour_angle)
-    """
-    latrad = np.radians(lat_deg)
-
-    # Local time and Day-of-Year adjustment for time zone
-    time_local = UTC + time_zone_shift
-    doy_adjusted = np.where(time_local < 0.0, DOY - 1.0, DOY)
-    time_local = np.where(time_local < 0.0, 24.0 + time_local, time_local)
-
-    # Day angle in radians
-    day_angle = 2.0 * np.pi * (doy_adjusted - 1.0) / 365.0
-
-    # Solar declination angle (radians)
-    solar_decl = (
-        0.006918
-        - 0.399912 * np.cos(day_angle)
-        + 0.070257 * np.sin(day_angle)
-        - 0.006758 * np.cos(2.0 * day_angle)
-        + 0.000907 * np.sin(2.0 * day_angle)
-        - 0.002697 * np.cos(3.0 * day_angle)
-        + 0.001480 * np.sin(3.0 * day_angle)
-    )
-
-    # Local standard time meridian (degrees) & Equation of Time (minutes)
-    LSTM = 15.0 * time_zone_shift
-    B = 360.0 / 365.0 * (doy_adjusted - 81.0)
-    EofT_min2 = (
-        9.87 * np.sin(np.radians(2.0 * B))
-        - 7.53 * np.cos(np.radians(B))
-        - 1.5 * np.sin(np.radians(B))
-    )
-
-    # Time correction (minutes) and local solar time (hours)
-    TC = 4.0 * (lon_deg - LSTM) + EofT_min2
-    LST = time_local + TC / 60.0
-
-    # Hour angle (radians)
-    hour_angle = 15.0 * (LST - 12.0) * np.pi / 180.0
-
-    # Solar zenith angle (radians)
-    cos_zenith = np.sin(latrad) * np.sin(solar_decl) + np.cos(latrad) * np.cos(
-        solar_decl
-    ) * np.cos(hour_angle)
-    zenith_angle = np.arccos(np.clip(cos_zenith, -1.0, 1.0))
-
-    # Solar azimuth angle (radians)
-    cos_azimuth = (
-        np.sin(solar_decl) * np.cos(latrad)
-        - np.cos(solar_decl) * np.sin(latrad) * np.cos(hour_angle)
-    ) / np.sin(zenith_angle)
-    azimuth_angle = np.arccos(np.clip(cos_azimuth, -1.0, 1.0))
-    azimuth_angle = np.where(
-        LST > 12.0, 2.0 * np.pi - azimuth_angle, azimuth_angle
-    )
-
-    zenith_angle_deg = np.degrees(zenith_angle)
-    azimuth_angle_deg = np.degrees(azimuth_angle)
-
-    # Sunrise / sunset hours in local time
-    cos_sun_angle = -np.sin(latrad) * np.sin(solar_decl) / (
-        np.cos(latrad) * np.cos(solar_decl)
-    )
-    sun_hour_term = (180.0 / (15.0 * np.pi)) * np.arccos(
-        np.clip(cos_sun_angle, -1.0, 1.0)
-    )
-
-    sunrise = 12.0 - sun_hour_term - TC / 60.0
-    sunset = 12.0 + sun_hour_term - TC / 60.0
-
-    return (
-        zenith_angle_deg,
-        azimuth_angle_deg,
-        sunrise,
-        sunset,
-        solar_decl,
-        hour_angle,
-    )
-
-def TOA_incoming_solar(DOY: float | np.ndarray, UTC: float | np.ndarray, time_zone_shift: float, lat_deg: float, lon_deg: float, S0: float
-                       ) -> tuple[float | np.ndarray,
-                                  float | np.ndarray,
-                                  float | np.ndarray,
-                                  float | np.ndarray,
-                                  float | np.ndarray,
-                                  float | np.ndarray]:
-    """Computes Top of Atmosphere (TOA) incident solar flux and solar geometry parameters.
-
-    Returns:
-        Tuple: (RsTOA, zenith_angle_deg, azimuth_angle_deg, sunrise, sunset, solar_decl, hour_angle)
-    """
-    # Compute solar geometry parameters via helper function
-    (
-        zenith_angle_deg,
-        azimuth_angle_deg,
-        sunrise,
-        sunset,
-        solar_decl,
-        hour_angle,
-    ) = solar_geometry(DOY, UTC, time_zone_shift, lat_deg, lon_deg)
-
-    # Ratio of actual to mean Earth-Sun distance (-)
-    r = 1.0 + 0.017 * np.cos(2.0 * np.pi / 365.0 * (186.0 - DOY))
-
-    # Cap zenith angle at 90 degrees (below horizon set to horizon)
-    zenith_angle_deg = np.minimum(zenith_angle_deg, 90.0)
-
-    # Convert zenith angle to radians
-    theta = np.radians(zenith_angle_deg)
-
-    # Calculate TOA Solar Radiation (W/m^2)
-    RsTOA = S0 * np.cos(theta) / (r**2)
-
-    return (
-        RsTOA,
-        zenith_angle_deg,
-        azimuth_angle_deg,
-        sunrise,
-        sunset,
-        solar_decl,
-        hour_angle,
-    )

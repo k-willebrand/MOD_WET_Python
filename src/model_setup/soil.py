@@ -1,45 +1,7 @@
 import numpy as np
 
-def field_capacity(
-    psi_s: np.ndarray, b: np.ndarray, porosity: np.ndarray
-) -> np.ndarray:
-    """Compute field capacity volumetric soil moisture. `psi_s` must be in cm."""
-    return porosity * (340.0 / np.abs(psi_s)) ** (-1.0 / b)
-
-def wilting_point(
-    psi_s: np.ndarray, b: np.ndarray, porosity: np.ndarray
-) -> np.ndarray:
-    """Compute permanent wilting point volumetric soil moisture. `psi_s` must be in cm."""
-    return porosity * (15000.0 / np.abs(psi_s)) ** (-1.0 / b)
-
-def topo_soil_index(
-    m: float,
-    flowacc: np.ndarray,
-    mask: np.ndarray,
-    slope_deg: np.ndarray,
-    K0: np.ndarray,
-    dx: float,
-    dy: float,
-) -> tuple[np.ndarray, float, np.ndarray, float]:
-    """Compute the soil-topographic index, mean topographic index, transmissivity, and basin area."""
-    # Upstream drainage area per unit contour length
-    ai = flowacc * dx
-
-    # Convert slope to radians and handle 0-degree slopes to avoid division by zero
-    slope_rad = np.radians(slope_deg)
-    tan_slope = np.where(slope_rad == 0, np.nan, np.tan(slope_rad))
-
-    # Transmissivity under saturated conditions
-    T0 = K0 * m
-
-    # Local soil-topographic index
-    lambda_map = np.log(ai / (T0 * tan_slope)) * mask
-
-    # Basin area and mean topographic index
-    basin_area = float(np.nansum(mask * dx * dy))
-    lambda_mean = float(np.nansum(lambda_map * dx * dy) / basin_area)
-
-    return lambda_map, lambda_mean, T0, basin_area
+from src.chapter7 import field_capacity, wilting_point
+from src.chapter11 import topo_soil_index
 
 def derive_soil_properties(model) -> None:
     """Derive spatial soil moisture limits, storage capacities, and apply domain masking."""
