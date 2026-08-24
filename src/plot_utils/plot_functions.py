@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 def get_day_of_year_flexible(target_dt64, start_month=10):
     """
@@ -78,18 +79,30 @@ def plot_format(axes, xlab, ylab, grid=True, majcol='#D5D8DC', mincol='#EAECEE')
     return axes
 
 def plot_spatial_data(fig, ax, x_data, y_data, plot_data, x_lab, y_lab, bar_label, 
-                      plot_title: Optional[str] = None, 
+                      plot_title: Optional[str] = None, vmin: Optional[float] = None, vmax: Optional[float] = None, 
                       plot_cmap: Optional[str] = "viridis", sci_not: Optional[bool] = False):
     # sort data as a fail-safe
     x_data = np.sort(x_data)
     y_data = np.sort(y_data)
-    im = ax.imshow(plot_data, 
-                   extent=[x_data[0], x_data[-1], y_data[-1], y_data[0]],
-                   cmap=plot_cmap,
-                   zorder=5
-    )
+    if vmin is not None and vmax is not None:
+        im = ax.imshow(plot_data, 
+                    extent=[x_data[0], x_data[-1], y_data[-1], y_data[0]],
+                    cmap=plot_cmap, vmin=vmin, vmax=vmax,
+                    zorder=5
+        )
+    else:
+        im = ax.imshow(plot_data, 
+                    extent=[x_data[0], x_data[-1], y_data[-1], y_data[0]],
+                    cmap=plot_cmap,
+                    zorder=5
+        )
     # add color bar
-    cbar = fig.colorbar(im, ax=ax, shrink=1.0)
+    # Create an axis divider that matches the plot's height
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.1)
+
+    # 4. Draw the colorbar in the new axis
+    cbar = fig.colorbar(im, ax=ax, cax=cax)
     cbar.set_label(bar_label, fontsize=12)
 
     # Formatting

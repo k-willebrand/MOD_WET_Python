@@ -13,7 +13,7 @@ from scipy.sparse.linalg import spsolve
 from skimage.morphology import reconstruction
 
 import matplotlib.pyplot as plt
-import matplotlib.ticker as ticker
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # link core repo folder
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -616,7 +616,7 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
     slope[slope == 0] = np.mean(slope)
 
     # Visual confirmations bypassed automatically for batch execution runs, plots are saved
-    if save_plots:
+    if save_plots or display_plots:
         # Figure 1
         fig1, ax = plt.subplots(num=1)
         im = ax.imshow(
@@ -625,7 +625,9 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
             cmap='terrain'
         )
         # add color bar
-        cbar = fig1.colorbar(im, ax=ax)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        cbar = fig1.colorbar(im, ax=ax, cax=cax)
         cbar.set_label('Elevation (m)', fontsize=12)
 
         # formatting
@@ -650,7 +652,9 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
         ax.scatter(X[row_coord, col_coord], Y[row_coord, col_coord], s=300, c="None", marker="o", edgecolors="red", linewidths=3, zorder=6)
 
         # add color bar
-        cbar = fig2.colorbar(im, ax=ax)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        cbar = fig2.colorbar(im, ax=ax, cax=cax)
         cbar.set_label('Log of Flow Accumulation', fontsize=12)
 
         # formatting
@@ -756,7 +760,7 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
     x_stream = X.ravel(order='F')[I_stream]
     y_stream = Y.ravel(order='F')[I_stream]
 
-    if save_plots:
+    if save_plots or display_plots:
         # Figure 3
         fig3, ax = plt.subplots(num=3)
         plt.clf()
@@ -784,7 +788,9 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
         # ax.scatter(X[row_coord, col_coord], Y[row_coord, col_coord], s=300, c="None", marker="o", edgecolors="red", linewidths=3, zorder=6)
 
         # add color bar
-        cbar = fig3.colorbar(im, ax=ax)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.1)
+        cbar = fig3.colorbar(im, ax=ax, cax=cax)
         cbar.set_label('Log of Flow Accumulation', fontsize=12)
 
         # Overlay transparent mask (set non-basin 0s to NaN so background stays dark blue)
@@ -819,7 +825,7 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
         # Ensure interactive mode is disabled if running in a GUI backend
         plt.ioff()
 
-        fig4, ax = plt.subplots(num=4, subplot_kw={'projection': '3d'})
+        fig4, ax = plt.subplots(num=4, subplot_kw={'projection': '3d'}, figsize=(9, 9))
 
         # Relative elevation and surface plot
         elev_relative = (elev - elev[row_coord, col_coord]) * mask
@@ -863,7 +869,8 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
         ax.set_ylim([Y.min(), Y.max()])
 
         # Save Figure
-        fig4.savefig(plots_path / "Fig4_3D_watershed_mask_stream_network.png", dpi=300, transparent=False)
+        fig4.savefig(plots_path / "Fig4_3D_watershed_mask_stream_network.png", dpi=600, 
+                     bbox_inches="tight", pad_inches=0.5, transparent=False)
         if not display_plots:
             plt.close(fig4)
 
@@ -1304,9 +1311,9 @@ def inspect_plot_option(save_plots, plots_path, display_plots):
             plots_path.mkdir(parents=True, exist_ok=True)
         else:
             sys.exit("Invalid or missing plots_path")
-    else:
-        if display_plots:
-            sys.exit("To display plots, save_plots must be set to True.")
+    # else:
+    #     if display_plots:
+    #         sys.exit("To display plots, save_plots must be set to True.")
 
 def inspect_paths(static_data_file, met_data_file):
     # Static data output inspection

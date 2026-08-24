@@ -6,9 +6,8 @@ __pycache__/
 obsolete/
 tests/
 plots/
-bear_creek_figures.py
-data/model_output/bear_creek
-data/model_output/pine_creek
+data/model_output/bear_creek/
+data/model_output/pine_creek/
 data_no_repo
 
 # Ignore common spreadsheet and data types

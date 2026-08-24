@@ -171,7 +171,7 @@ def evaluate_simulation(output_filepath: str | Path, plots_path: str | Path,
         plot_spatial_data(fig13, ax13, easting, northing, map_SWE, 
                         "Easting (m)", "Northing (m)", None, 
                         plot_cmap="cool_r", sci_not=True,
-                        plot_title=f"SWE (m) on {year}-{month}-{day} (DOWY {dowy_f13})")
+                        plot_title=f"SWE (m) on {month}-{day} (DOWY {dowy_f13})")
     else:
         print("April 1st not found. Check the meteorological forcing data.")
 
@@ -191,7 +191,7 @@ def evaluate_simulation(output_filepath: str | Path, plots_path: str | Path,
         plot_spatial_data(fig14, ax14, easting, northing, map_Srz, 
                         "Easting (m)", "Northing (m)", None, 
                         plot_cmap="viridis", sci_not=True,
-                        plot_title=f"Soil Root Zone Moisture (m) on {year}-{month}-{day} (DOWY {dowy_f14})")
+                        plot_title=f"Soil Root Zone Moisture (m) on {month}-{day} (DOWY {dowy_f14})")
     else:
         print(f"DOWY {dowy_f14} not found. Check the meteorological forcing data.")
 
@@ -209,7 +209,7 @@ def evaluate_simulation(output_filepath: str | Path, plots_path: str | Path,
         plot_spatial_data(fig15, ax15, easting, northing, map_Srz, 
                         "Easting (m)", "Northing (m)", None, 
                         plot_cmap="viridis", sci_not=True,
-                        plot_title=f"Soil Root Zone Moisture (m) on {year}-{month}-{day} (DOWY {dowy_f15})")
+                        plot_title=f"Soil Root Zone Moisture (m) on {month}-{day} (DOWY {dowy_f15})")
     else:
         print(f"DOWY {dowy_f15} not found. Check the meteorological forcing data.")
 
@@ -227,7 +227,7 @@ def evaluate_simulation(output_filepath: str | Path, plots_path: str | Path,
         plot_spatial_data(fig16, ax16, easting, northing, map_Srz, 
                         "Easting (m)", "Northing (m)", None, 
                         plot_cmap="viridis", sci_not=True,
-                        plot_title=f"Soil Root Zone Moisture (m) on {year}-{month}-{day} (DOWY {dowy_f16})")
+                        plot_title=f"Soil Root Zone Moisture (m) on {month}-{day} (DOWY {dowy_f16})")
     else:
         print(f"DOWY {dowy_f16} not found. Check the meteorological forcing data.")
 
@@ -307,6 +307,7 @@ def evaluate_simulation(output_filepath: str | Path, plots_path: str | Path,
     fig22, ax22 = plt.subplots(num=22) # define a new figure
     plot_spatial_data(fig22, ax22, easting, northing, map_qse, 
                       "Easting (m)", "Northing (m)", None, 
+                      vmin=0, vmax=10,
                       plot_cmap="viridis", sci_not=True,
                       plot_title="Annual Average Saturation Excess Runoff (mm/day)")
 
@@ -315,6 +316,7 @@ def evaluate_simulation(output_filepath: str | Path, plots_path: str | Path,
     fig23, ax23 = plt.subplots(num=23) # define a new figure
     plot_spatial_data(fig23, ax23, easting, northing, map_qie, 
                       "Easting (m)", "Northing (m)", None, 
+                      vmin=0, vmax=10,
                       plot_cmap="viridis", sci_not=True,
                       plot_title="Annual Average Infiltration Excess Runoff (mm/day)")
 

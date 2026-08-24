@@ -1,0 +1,32 @@
+key,value,units,description
+z_m,2.0,m,Meteorological reference-level measurement height
+utmzone,10 S,-,UTM zone identifier string
+time_zone_shift,-8.0,hours,Time zone shift between UTC and local time
+SDmean0,0.1,m,Initial average saturation deficit
+m,0.01,m,Decay factor of lateral transmissivity w.r.t. saturation deficit
+T0,0.0063,m^2/hour,Surface transmissivity
+d_rz,1.0,m,Depth of rootzone
+THETAs,0.4,-,Soil porosity
+PSIs,0.1210,m,Absolute value of saturated matric head
+b_BC,4.0,-,Brooks-Corey exponent parameter
+albedo,0.2,-,Surface soil albedo
+emiss,0.9,-,Surface soil emissivity
+Csoil,1300000,J/m^3/K,Soil heat capacity
+dg,0.05,m,Surface soil depth
+h_rough,0.05,m,Characteristic soil roughness height
+h_snow,0.03,m,Height of snow roughness elements
+z_snow,2.0,m,Meteorological ref.-level height over snow
+snow_emiss,0.99,-,Snow surface emissivity
+RestoreAlbedo,4.1667,mm/h,Snowfall rate required to reset albedo to new snow
+LapseRateTair,-0.0065,K/m,Constant lapse rate in air temperature
+LapseRateTdew,-0.0046,K/m,Constant lapse rate in air dewpoint temperature
+LapseRatePPT,0.35,1/km,Lapse rate parameter for precipitation
+manning_n_mean,0.045,-,Mean channel Manning roughness over basin
+channel_width_exponent_c,0.5,-,Scaling parameter in channel width power law
+channel_width_coeff_alpha,10.0,-,Multiplicative parameter in channel width power law
+mass_balance_tolerance,1e-4,-,Mass balance tolerance for convergence check
+clear_sky_atmos_emiss_model,prata,-,Clear-sky atmospheric emissivity model
+cloudy_sky_atmos_emiss_model,crawford,-,Cloudy-sky atmospheric emissivity model
+clear_sky_shortwave_model_name,crawford,-,Clear-sky shortwave attenuation model
+precip_water_model_name,prata,-,Precipitable water model
+gamma_dust,,-,Dust coefficient for Dingman model
