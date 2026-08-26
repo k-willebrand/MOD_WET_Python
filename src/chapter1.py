@@ -870,7 +870,7 @@ def watershed_area_and_stream_delineation(easting: np.ndarray, northing: np.ndar
 
         # Save Figure
         fig4.savefig(plots_path / "Fig4_3D_watershed_mask_stream_network.png", dpi=600, 
-                     bbox_inches="tight", pad_inches=0.5, transparent=False)
+                     bbox_inches="tight", pad_inches=1.0, transparent=False)
         if not display_plots:
             plt.close(fig4)
 
